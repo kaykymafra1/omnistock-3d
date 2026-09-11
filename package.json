@@ -1,0 +1,17 @@
+{
+  "name": "omniwarehouse-3d-sankhya",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Mapeamento 3D de armazéns integrado ao ecossistema Sankhya ERP",
+  "scripts": {
+    "validate": "node scripts/validate.mjs"
+  },
+  "keywords": [
+    "sankhya",
+    "warehouse",
+    "wms",
+    "threejs",
+    "tgfloc"
+  ],
+  "license": "UNLICENSED"
+}

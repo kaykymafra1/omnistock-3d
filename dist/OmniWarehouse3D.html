@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OmniWarehouse 3D — Gestão Visual de Armazéns</title>
+    <meta name="description" content="Mapeamento 3D de locais de estoque integrado ao ecossistema Sankhya.">
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%230f172a'/%3E%3Cpath d='M12 24 32 13l20 11v25H12z' fill='none' stroke='%238b5cf6' stroke-width='5'/%3E%3Cpath d='M23 31h18v18H23z' fill='%233b82f6'/%3E%3C/svg%3E">
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- FontAwesome -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <!-- Three.js (Core, OrbitControls, Tween.js) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+        
+        body { font-family: 'Inter', sans-serif; margin: 0; overflow: hidden; background-color: #0f172a; color: #f8fafc; }
+        #canvas-container { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 1; background: radial-gradient(circle at 50% 50%, #1e293b 0%, #020617 100%); }
+        #ui-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; z-index: 10; pointer-events: none; display: flex; }
+        .interactive-ui { pointer-events: auto; }
+        .glass-panel { background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 20px 40px -10px rgba(0,0,0,0.5); }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; } .custom-scrollbar::-webkit-scrollbar-track { background: transparent; } .custom-scrollbar::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+        .tree-line { position: absolute; left: -12px; top: 14px; width: 12px; height: 1px; background-color: #475569; }
+        .tree-line-vert { position: absolute; left: -12px; top: -14px; width: 1px; height: 28px; background-color: #475569; }
+        .tree-node-container { position: relative; padding-left: 20px; }
+        .tree-btn { transition: all 0.2s; } .tree-btn:hover { background-color: rgba(255, 255, 255, 0.05); }
+        .tree-btn.active { background-color: rgba(59, 130, 246, 0.25); border-left-color: #3b82f6; }
+        #loader { position: absolute; inset: 0; background: #0f172a; z-index: 50; display: flex; flex-direction: column; align-items: center; justify-content: center; transition: opacity 0.5s ease; }
+        .spinner { width: 50px; height: 50px; border: 3px solid rgba(59, 130, 246, 0.3); border-radius: 50%; border-top-color: #3b82f6; animation: spin 1s ease-in-out infinite; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+    <!-- Loading Screen -->
+    <div id="loader" class="interactive-ui">
+        <div class="spinner mb-4"></div>
+        <h2 class="text-xl font-bold text-white tracking-widest">OMNIWAREHOUSE <span class="text-blue-500 font-light">3D</span></h2>
+        <p class="text-sm text-slate-400 mt-2 font-mono">Processando MASCLOCAL e Zonas...</p>
+    </div>
+
+    <!-- 3D Canvas -->
+    <div id="canvas-container"></div>
+
+    <!-- UI Overlay -->
+    <div id="ui-layer">
+        
+        <!-- Sidebar Esquerda: Hierarquia -->
+        <aside class="w-80 h-full flex flex-col p-4 gap-4 interactive-ui border-r border-slate-800/50 bg-slate-900/60 backdrop-blur-md">
+            <div class="glass-panel p-4 rounded-xl flex items-center gap-3 shrink-0">
+                <div class="w-10 h-10 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 flex items-center justify-center text-white shadow-lg">
+                    <i class="fas fa-layer-group"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-sm leading-tight">OmniWarehouse 3D</h1>
+                    <p class="text-[10px] text-slate-400 font-mono">Estrutura de locais TGFLOC</p>
+                </div>
+            </div>
+
+            <div class="relative shrink-0">
+                <i class="fas fa-search absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-500 text-xs"></i>
+                <input type="text" id="search-input" placeholder="Buscar local ou zona..." class="w-full bg-slate-800/80 border border-slate-700 text-slate-200 text-xs rounded-lg pl-8 pr-3 py-2.5 focus:outline-none focus:border-indigo-500 transition-colors">
+            </div>
+
+            <div class="flex-1 overflow-y-auto custom-scrollbar pr-2 pb-4">
+                <div id="tree-container" class="space-y-1 text-sm font-mono"></div>
+            </div>
+
+            <div class="shrink-0 pt-4 border-t border-slate-800 space-y-3">
+                <div class="flex gap-2 text-[10px] font-medium text-slate-400">
+                    <div class="flex items-center gap-1.5"><div class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></div> Livre</div>
+                    <div class="flex items-center gap-1.5"><div class="w-2.5 h-2.5 rounded-sm bg-amber-500"></div> Parcial</div>
+                    <div class="flex items-center gap-1.5"><div class="w-2.5 h-2.5 rounded-sm bg-rose-500"></div> Cheio</div>
+                </div>
+                <div class="flex items-center gap-2 text-[10px] font-medium text-slate-400 mt-2">
+                    <div class="w-4 h-4 bg-yellow-400/20 text-yellow-400 flex items-center justify-center rounded border border-yellow-400/50">
+                        <i class="fas fa-exclamation-triangle text-[8px]"></i>
+                    </div>
+                    Reabastecimento
+                </div>
+            </div>
+        </aside>
+
+        <!-- Área Central -->
+        <div class="flex-1 flex flex-col justify-end items-center pb-8 interactive-ui pointer-events-none">
+            <div class="glass-panel px-4 py-2 rounded-full flex gap-4 pointer-events-auto shadow-2xl">
+                <button onclick="resetCamera()" class="text-slate-300 hover:text-white transition-colors flex items-center gap-2 text-xs font-bold px-2 py-1">
+                    <i class="fas fa-compress-arrows-alt"></i> Visão Geral
+                </button>
+                <div class="w-px bg-slate-700"></div>
+                <button onclick="toggleWireframe()" class="text-slate-300 hover:text-white transition-colors flex items-center gap-2 text-xs font-bold px-2 py-1">
+                    <i class="fas fa-border-all"></i> Estrutura
+                </button>
+            </div>
+        </div>
+
+        <!-- Sidebar Direita: Detalhes -->
+        <aside class="w-80 h-full p-4 interactive-ui flex flex-col justify-center transition-transform duration-300 transform translate-x-full z-20" id="details-panel">
+            <div class="glass-panel rounded-xl flex flex-col shadow-2xl border-t-4 border-indigo-500 max-h-[85vh]">
+                <div class="p-5 border-b border-slate-700/50 flex justify-between items-start relative overflow-hidden">
+                    <div class="relative z-10">
+                        <div class="flex items-center gap-2 mb-1">
+                            <h2 class="text-[10px] text-indigo-400 font-bold uppercase tracking-wider" id="det-level">Nível</h2>
+                            <span id="det-zone-badge" class="text-[8px] font-bold px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 border">ZONA</span>
+                        </div>
+                        <h3 class="text-xl font-black text-white font-mono tracking-tight" id="det-codlocal">COD</h3>
+                        <p class="text-[10px] text-slate-400 mt-1" id="det-descrlocal">DESC</p>
+                    </div>
+                    <button type="button" onclick="closeDetails()" aria-label="Fechar detalhes" class="relative z-10 text-slate-400 hover:text-white w-6 h-6 flex justify-end"><i class="fas fa-times text-lg"></i></button>
+                </div>
+
+                <div class="p-5 flex-1 overflow-y-auto custom-scrollbar space-y-5">
+                    <div>
+                        <div class="flex justify-between items-center mb-2">
+                            <span class="text-xs text-slate-400 font-medium">Status do Local</span>
+                            <span class="text-xs font-bold px-2 py-1 rounded border" id="det-status-badge">STATUS</span>
+                        </div>
+                        <div class="w-full bg-slate-800 rounded-full h-1.5 overflow-hidden">
+                            <div class="h-full w-full transition-all duration-500" id="det-progress-bar"></div>
+                        </div>
+                    </div>
+
+                    <div id="product-info-block" class="bg-slate-800/50 rounded-lg p-4 border border-slate-700">
+                        <h4 class="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-3"><i class="fas fa-box-open"></i> Conteúdo (Mock)</h4>
+                        <div class="space-y-3">
+                            <div><span class="block text-[9px] text-slate-400 mb-0.5">PRODUTO</span><span class="block text-xs font-bold text-slate-200" id="det-prod-name">-</span></div>
+                            <div class="bg-indigo-900/20 p-3 rounded border border-indigo-500/20 flex justify-between items-center mt-2">
+                                <span class="text-xs font-medium text-indigo-300">Qtd Físico:</span>
+                                <span class="text-lg font-black text-white" id="det-prod-qtd">0 <span class="text-xs font-normal text-slate-400">UN</span></span>
+                            </div>
+                            <div id="det-transfer-alert" class="hidden mt-2 bg-yellow-500/20 border border-yellow-500/30 p-2 rounded flex items-center gap-2 text-yellow-400">
+                                <i class="fas fa-exclamation-triangle text-xs"></i>
+                                <span class="text-[10px] font-bold">Ressuprimento Necessário</span>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2 mt-3">
+                                <button id="open-transfer-btn" onclick="openTransferModal()" class="text-[10px] font-bold text-indigo-300 border border-indigo-500/40 rounded px-2 py-2 hover:bg-indigo-500/20 transition-colors">
+                                    <i class="fas fa-right-left mr-1"></i> Transferir
+                                </button>
+                                <button id="open-storage-btn" onclick="openStorageModal()" class="text-[10px] font-bold text-amber-300 border border-amber-500/40 rounded px-2 py-2 hover:bg-amber-500/20 transition-colors">
+                                    <i class="fas fa-boxes-stacked mr-1"></i> Armazenar
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div id="empty-info-block" class="hidden text-center py-6">
+                        <div class="w-10 h-10 rounded-full bg-emerald-500/10 text-emerald-500 flex items-center justify-center mx-auto mb-3"><i class="fas fa-check"></i></div>
+                        <p class="text-sm font-bold text-emerald-400">Posição Livre</p>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <div id="operation-modal" class="hidden fixed inset-0 items-center justify-center bg-slate-950/70 backdrop-blur-sm pointer-events-auto z-50" onclick="if (event.target === this) closeOperationModal()">
+            <div class="glass-panel w-[min(92vw,380px)] rounded-xl p-5 shadow-2xl">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 id="operation-title" class="font-bold text-white">Operação</h3>
+                    <button type="button" onclick="closeOperationModal()" aria-label="Fechar operação" class="text-slate-400 hover:text-white"><i class="fas fa-times"></i></button>
+                </div>
+                <p id="operation-product" class="text-xs text-slate-300 mb-4"></p>
+                <label class="block text-[10px] text-slate-400 font-bold uppercase mb-1">Quantidade</label>
+                <input id="operation-quantity" type="number" min="1" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500">
+                <label class="block text-[10px] text-slate-400 font-bold uppercase mb-1">Destino</label>
+                <select id="operation-destination" class="w-full bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white mb-4 focus:outline-none focus:border-indigo-500"></select>
+                <p id="operation-feedback" class="hidden text-xs mb-3"></p>
+                <button id="operation-confirm" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-xs rounded-lg py-2.5 transition-colors"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Camadas Domain, Application e Infrastructure consolidadas para o componente Sankhya -->
+    <script>
+        window.OmniWarehouse = window.OmniWarehouse || {};
+
+        OmniWarehouse.Domain = (() => {
+            const STATUS = Object.freeze({ FREE: 'LIVRE', PARTIAL: 'PARCIAL', FULL: 'CHEIO' });
+            const statusFromOccupancy = occupancy => occupancy <= 0 ? STATUS.FREE : (occupancy >= 100 ? STATUS.FULL : STATUS.PARTIAL);
+            const normalizeLocation = location => {
+                location.ocupacao = Math.max(0, Math.min(100, Number(location.ocupacao) || 0));
+                location.qtd = Math.max(0, Math.floor(Number(location.qtd) || 0));
+                location.status = statusFromOccupancy(location.ocupacao);
+                if (location.status === STATUS.FREE) { location.produto = null; location.qtd = 0; }
+                return location;
+            };
+            return { STATUS, statusFromOccupancy, normalizeLocation };
+        })();
+
+        OmniWarehouse.Application = (() => {
+            const validateMovement = (source, destination, quantity) => {
+                const amount = Number(quantity);
+                if (!source || !destination || !source.produto || amount <= 0 || amount > source.qtd || destination.ocupacao > 0) {
+                    throw new Error('Informe uma quantidade válida e escolha um destino livre.');
+                }
+                return amount;
+            };
+            const transferProduct = (source, destination, quantity) => {
+                const amount = validateMovement(source, destination, quantity);
+                destination.produto = source.produto;
+                destination.qtd = amount;
+                destination.ocupacao = Math.min(100, Math.max(1, Math.round(amount / 1.5)));
+                source.qtd -= amount;
+                source.ocupacao = source.qtd === 0 ? 0 : Math.min(100, Math.max(1, Math.round(source.qtd / 1.5)));
+            };
+            const createStorageTask = (tasks, source, destination, quantity) => {
+                const amount = validateMovement(source, destination, quantity);
+                const task = { id: tasks.length + 1, produto: source.produto.name, quantidade: amount, origem: source.codlocal, destino: destination.codlocal, status: 'PENDENTE' };
+                tasks.push(task);
+                return task;
+            };
+            return { transferProduct, createStorageTask };
+        })();
+
+        OmniWarehouse.MockWarehouseRepository = {
+            listProducts: () => [
+                { cod: '882', name: 'Ração 15kg' },
+                { cod: '991', name: 'Antipulgas' },
+                { cod: '445', name: 'Tapete Higiênico' }
+            ]
+        };
+    </script>
+
+    <script>
+        const CONFIG = {
+            colors: { free: 0x10b981, partial: 0xf59e0b, full: 0xef4444, rack: 0x334155, floor: 0x1e293b, highlight: 0xffffff },
+            bayWidth: 2.0, bayHeightPicking: 1.2, bayHeightPulmao: 1.8, bayDepth: 1.2, aisleWidth: 3.5, rackThickness: 0.1,
+            
+            // Aqui mapeamos os Nao-Analíticos da planilha para coordenadas 3D físicas (px = X, pz = Z)
+            zones: [
+                // CENTRO - Operação Principal
+                { cod: "1001000", desc: "A - ESTOQUE PICKING", colorHex: '#8b5cf6', type: 'picking', ruas: 4, mods: 10, levels: 3, px: 0, pz: 0 },
+                { cod: "1006000", desc: "A - ESTOQUE PULMÃO", colorHex: '#f97316', type: 'pulmao', ruas: 4, mods: 12, levels: 6, px: 0, pz: -25 },
+                
+                // LATERAL ESQUERDA - Retenções e Brindes
+                { cod: "1002000", desc: "B - BRINDES / INSUMOS", colorHex: '#06b6d4', type: 'special', ruas: 2, mods: 6, levels: 4, px: -35, pz: 0 },
+                { cod: "1004000", desc: "B - AVARIAS / VENC. PROX", colorHex: '#f43f5e', type: 'special', ruas: 1, mods: 6, levels: 4, px: -35, pz: -12 },
+                { cod: "1005000", desc: "B - VENCIDOS / PERDAS", colorHex: '#475569', type: 'special', ruas: 1, mods: 6, levels: 4, px: -35, pz: -20 },
+                
+                // LATERAL DIREITA - Específicos e Frios
+                { cod: "1007000", desc: "B - CÂMARA FRIA", colorHex: '#3b82f6', type: 'pulmao', ruas: 2, mods: 5, levels: 5, px: 35, pz: -25 },
+                { cod: "1009000", desc: "B - VETT VIVA", colorHex: '#10b981', type: 'special', ruas: 1, mods: 5, levels: 4, px: 35, pz: 0 },
+                { cod: "1011000", desc: "B - VENDAS PACOTE", colorHex: '#d946ef', type: 'special', ruas: 1, mods: 5, levels: 4, px: 35, pz: -10 },
+                
+                // FRENTE - Áreas de Chão (Docas, Inventário) -> type: 'floor' cria apenas demarcações sem estantes altas
+                { cod: "1012000", desc: "B - DOCAS", colorHex: '#cbd5e1', type: 'floor', ruas: 1, mods: 10, levels: 1, px: 0, pz: 15 },
+                { cod: "1013000", desc: "INVENTÁRIO", colorHex: '#eab308', type: 'floor', ruas: 1, mods: 4, levels: 1, px: -25, pz: 15 },
+                { cod: "1014000", desc: "DIVERGÊNCIA (CORTE)", colorHex: '#ef4444', type: 'floor', ruas: 1, mods: 4, levels: 1, px: 25, pz: 15 },
+            ]
+        };
+
+        let scene, camera, renderer, controls, raycaster, mouse;
+        let warehouseGroup = new THREE.Group();
+        let locationsData = [];
+        let hierarchicalTree = [];
+        let currentSelectedNode = null;
+        let storageTasks = [];
+        let hoveredMesh = null, selectedMesh = null, selectedMeshes = [], isWireframe = false;
+
+        const mockProds = OmniWarehouse.MockWarehouseRepository.listProducts();
+
+        init();
+
+        function init() {
+            const container = document.getElementById('canvas-container');
+            scene = new THREE.Scene();
+            scene.fog = new THREE.FogExp2(0x020617, 0.008); 
+
+            camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.set(0, 70, 90); // Visão bem do alto e central
+
+            renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.shadowMap.enabled = true;
+            container.appendChild(renderer.domElement);
+
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true; controls.dampingFactor = 0.05;
+            controls.maxPolarAngle = Math.PI / 2 - 0.05;
+
+            // Luzes
+            scene.add(new THREE.AmbientLight(0xffffff, 0.5));
+            const dirLight = new THREE.DirectionalLight(0xffffff, 0.7);
+            dirLight.position.set(50, 100, 50); dirLight.castShadow = true;
+            dirLight.shadow.camera.left = -60; dirLight.shadow.camera.right = 60;
+            dirLight.shadow.camera.top = 60; dirLight.shadow.camera.bottom = -60;
+            scene.add(dirLight);
+
+            // Chão
+            const floor = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.MeshStandardMaterial({ color: CONFIG.colors.floor, roughness: 0.8 }));
+            floor.rotation.x = -Math.PI / 2; floor.receiveShadow = true; scene.add(floor);
+            
+            const gridHelper = new THREE.GridHelper(200, 100, 0x334155, 0x0f172a);
+            gridHelper.position.y = 0.01; scene.add(gridHelper);
+
+            scene.add(warehouseGroup);
+
+            generateData();
+            build3D();
+            buildTreeUI();
+
+            raycaster = new THREE.Raycaster();
+            mouse = new THREE.Vector2();
+            
+            window.addEventListener('resize', () => {
+                camera.aspect = window.innerWidth / window.innerHeight; camera.updateProjectionMatrix();
+                renderer.setSize(window.innerWidth, window.innerHeight);
+            });
+            renderer.domElement.addEventListener('pointermove', onPointerMove);
+            renderer.domElement.addEventListener('click', onClick);
+            document.getElementById('search-input').addEventListener('input', (e) => filterTree(e.target.value));
+            document.addEventListener('keydown', (e) => {
+                if (e.key === 'Escape') {
+                    closeOperationModal();
+                    closeDetails();
+                }
+            });
+
+            setTimeout(() => {
+                document.getElementById('loader').style.opacity = '0';
+                setTimeout(() => document.getElementById('loader').style.display = 'none', 500);
+            }, 1000);
+
+            animate();
+        }
+
+        function generateData() {
+            const root = { codlocal: "0", descrlocal: "Armazém Principal Sankhya", analitico: "N", children: [], isRoot: true };
+
+            CONFIG.zones.forEach(zone => {
+                // Cria o nó Não-Analítico da Zona (Ex: 1004000 B - AVARIAS)
+                const zoneNode = { codlocal: zone.cod, descrlocal: zone.desc, analitico: "N", children: [], isZone: true, color: zone.colorHex };
+                
+                const bayH = zone.type === 'picking' ? CONFIG.bayHeightPicking : CONFIG.bayHeightPulmao;
+                
+                // Calcula offset da zona
+                const totalWidthX = (zone.mods * CONFIG.bayWidth);
+                const startX = zone.px - totalWidthX / 2 + (CONFIG.bayWidth/2);
+                const totalDepthZ = (zone.ruas * CONFIG.bayDepth) + ((zone.ruas - 1) * CONFIG.aisleWidth);
+                const startZ = zone.pz - totalDepthZ / 2 + (CONFIG.bayDepth/2);
+
+                for (let r = 0; r < zone.ruas; r++) {
+                    const ruaCod = `${zone.cod}.${(r+1).toString().padStart(2, '0')}`;
+                    const zPos = startZ + (r * (CONFIG.bayDepth + CONFIG.aisleWidth));
+                    const ruaNode = {
+                        codlocal: ruaCod,
+                        descrlocal: `Rua ${(r+1).toString().padStart(2, '0')}`,
+                        analitico: "N",
+                        isRua: true,
+                        children: [],
+                        posData: { x: zone.px, y: 0, z: zPos }
+                    };
+
+                    for (let m = 0; m < zone.mods; m++) {
+                        const xPos = startX + (m * CONFIG.bayWidth);
+                        const modCod = `${ruaCod}.${(m+1).toString().padStart(2, '0')}`;
+                        const modNode = {
+                            codlocal: modCod,
+                            descrlocal: `Mód ${(m+1).toString().padStart(2, '0')}`,
+                            analitico: "N",
+                            isModule: true,
+                            children: [],
+                            posData: { x: xPos, y: 0, z: zPos }
+                        };
+
+                        for (let l = 0; l < zone.levels; l++) {
+                            const lvlCod = `${modCod}.${(l+1).toString().padStart(2, '0')}`;
+                            const yPos = l * bayH;
+                            
+                            // Mock Status
+                            const rand = Math.random();
+                            let status = "LIVRE", ocupacao = 0, prod = null;
+                            if (rand > 0.6) { status = "CHEIO"; ocupacao = 100; prod = mockProds[Math.floor(Math.random() * mockProds.length)]; } 
+                            else if (rand > 0.4) { status = "PARCIAL"; ocupacao = Math.floor(Math.random() * 80) + 10; prod = mockProds[Math.floor(Math.random() * mockProds.length)]; }
+
+                            // Mock: 10% chance of needing replenishment if it's a picking zone and not full
+                            const needsReplenish = zone.type === 'picking' && ocupacao < 50 && Math.random() > 0.8;
+
+                            const lvlNode = {
+                                codlocal: lvlCod, descrlocal: `Nível ${(l+1).toString().padStart(2, '0')}`, analitico: "S",
+                                status, ocupacao, produto: prod, qtd: prod ? Math.floor(ocupacao * 1.5) : 0, needsReplenish,
+                                posData: { x: xPos, y: yPos, z: zPos, bayH, type: zone.type, color: zone.colorHex, l, modLevels: zone.levels }
+                            };
+                            modNode.children.push(lvlNode);
+                            locationsData.push(lvlNode);
+                        }
+                        ruaNode.children.push(modNode);
+                    }
+                    zoneNode.children.push(ruaNode);
+                }
+                root.children.push(zoneNode);
+            });
+            hierarchicalTree.push(root);
+        }
+
+        function createTextSprite(message, color = "rgba(255, 255, 255, 1)", background = 'rgba(234, 179, 8, 0.2)', border = 'rgba(234, 179, 8, 0.8)') {
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            canvas.width = 128;
+            canvas.height = 64;
+            
+            // Fundo
+            context.fillStyle = background;
+            context.fillRect(0, 0, canvas.width, canvas.height);
+            context.strokeStyle = border;
+            context.lineWidth = 4;
+            context.strokeRect(0, 0, canvas.width, canvas.height);
+
+            // Texto
+            context.font = "Bold 24px Arial";
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillStyle = color;
+            context.fillText(message, canvas.width / 2, canvas.height / 2);
+
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(3, 1.5, 1);
+            return sprite;
+        }
+
+        function build3D() {
+            const beamGeo = new THREE.BoxGeometry(CONFIG.bayWidth, CONFIG.rackThickness, CONFIG.rackThickness);
+            const depthBeamGeo = new THREE.BoxGeometry(CONFIG.rackThickness, CONFIG.rackThickness, CONFIG.bayDepth);
+            const rackMat = new THREE.MeshStandardMaterial({ color: CONFIG.colors.rack, roughness: 0.7 });
+
+            // Etiqueta da rua: fica na lateral esquerda de cada fileira.
+            CONFIG.zones.forEach(zone => {
+                const totalDepthZ = (zone.ruas * CONFIG.bayDepth) + ((zone.ruas - 1) * CONFIG.aisleWidth);
+                const startZ = zone.pz - totalDepthZ / 2 + (CONFIG.bayDepth / 2);
+                const labelX = zone.px - (zone.mods * CONFIG.bayWidth / 2) - 2;
+                const labelY = zone.type === 'floor' ? 1.2 : 2.5;
+
+                for (let r = 0; r < zone.ruas; r++) {
+                    const ruaNome = `Rua ${(r + 1).toString().padStart(2, '0')}`;
+                    const ruaZ = startZ + (r * (CONFIG.bayDepth + CONFIG.aisleWidth));
+                    const ruaLabel = createTextSprite(ruaNome, 'rgba(255, 255, 255, 1)', 'rgba(15, 23, 42, 0.9)', zone.colorHex);
+                    ruaLabel.position.set(labelX, labelY, ruaZ);
+                    ruaLabel.scale.set(4, 1.5, 1);
+                    warehouseGroup.add(ruaLabel);
+                }
+            });
+
+            locationsData.forEach(node => {
+                const { x, y, z, bayH, type, color, l, modLevels } = node.posData;
+
+                // Não desenha estrutura alta se for área de chão (Docas)
+                if (type !== 'floor') {
+                    const zoneMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(color), roughness: 0.5 });
+                    
+                    // Postes (Apenas no nível 0)
+                    if (l === 0) {
+                        const postGeo = new THREE.BoxGeometry(CONFIG.rackThickness, bayH * modLevels, CONFIG.rackThickness);
+                        [[-1,1], [1,1], [-1,-1], [1,-1]].forEach(offset => {
+                            const post = new THREE.Mesh(postGeo, rackMat);
+                            post.position.set(x + (offset[0]*CONFIG.bayWidth/2), (bayH * modLevels)/2, z + (offset[1]*CONFIG.bayDepth/2));
+                            post.castShadow = true; warehouseGroup.add(post);
+                        });
+                    }
+
+                    // Vigas
+                    const beamY = y + 0.1;
+                    const fBeam = new THREE.Mesh(beamGeo, zoneMat); fBeam.position.set(x, beamY, z + CONFIG.bayDepth/2); warehouseGroup.add(fBeam);
+                    const bBeam = new THREE.Mesh(beamGeo, zoneMat); bBeam.position.set(x, beamY, z - CONFIG.bayDepth/2); warehouseGroup.add(bBeam);
+                    const lBeam = new THREE.Mesh(depthBeamGeo, zoneMat); lBeam.position.set(x - CONFIG.bayWidth/2, beamY, z); warehouseGroup.add(lBeam);
+                    const rBeam = new THREE.Mesh(depthBeamGeo, zoneMat); rBeam.position.set(x + CONFIG.bayWidth/2, beamY, z); warehouseGroup.add(rBeam);
+                }
+
+                // Conteúdo (Caixa/Palete)
+                let itemColor = node.status === "CHEIO" ? CONFIG.colors.full : (node.status === "PARCIAL" ? CONFIG.colors.partial : CONFIG.colors.free);
+                const itemMat = new THREE.MeshStandardMaterial({ color: itemColor, roughness: 0.4, transparent: true, opacity: 0.95 });
+                
+                const itemH = type === 'floor' ? 0.8 : bayH * 0.7; // Caixas menores no chão
+                const itemMesh = new THREE.Mesh(new THREE.BoxGeometry(CONFIG.bayWidth * 0.85, itemH, CONFIG.bayDepth * 0.85), itemMat);
+                
+                let itemY = (type === 'floor' ? 0 : y + 0.1) + 0.05;
+                
+                if (node.ocupacao === 0) {
+                    itemMesh.scale.set(0.9, 0.05, 0.9); // Palete vazio
+                } else if (node.ocupacao < 100) {
+                    const sY = Math.max(0.2, node.ocupacao / 100);
+                    itemMesh.scale.set(0.9, sY, 0.9);
+                    itemY += (itemH * sY / 2);
+                } else {
+                    itemY += itemH / 2;
+                }
+
+                itemMesh.position.set(x, itemY, z);
+                itemMesh.userData = node; node.mesh = itemMesh;
+                itemMesh.castShadow = true; warehouseGroup.add(itemMesh);
+
+                // Add Replenishment Sprite
+                if (node.needsReplenish) {
+                    const sprite = createTextSprite("! REPOR !");
+                    sprite.position.set(x, itemY + itemH / 2 + 1, z);
+                    warehouseGroup.add(sprite);
+                }
+            });
+            
+            // Adiciona chão demarcado para áreas 'floor' (Docas)
+            CONFIG.zones.filter(z => z.type === 'floor').forEach(zone => {
+                 const w = zone.mods * CONFIG.bayWidth;
+                 const d = zone.ruas * CONFIG.bayDepth + ((zone.ruas-1)*CONFIG.aisleWidth);
+                 const mat = new THREE.MeshBasicMaterial({ color: new THREE.Color(zone.colorHex), transparent: true, opacity: 0.2, side: THREE.DoubleSide });
+                 const plane = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat);
+                 plane.rotation.x = -Math.PI/2; plane.position.set(zone.px, 0.02, zone.pz);
+                 warehouseGroup.add(plane);
+            });
+
+            // Desenha linhas de contorno em volta de cada zona
+            CONFIG.zones.forEach(zone => {
+                 const w = zone.mods * CONFIG.bayWidth;
+                 // Calcula a profundidade total incluindo os corredores
+                 const d = (zone.ruas * CONFIG.bayDepth) + ((zone.ruas > 1 ? zone.ruas - 1 : 0) * CONFIG.aisleWidth);
+                 
+                 // Expande um pouco a borda para não ficar exatamente colada na estante
+                 const padding = 1;
+                 const halfW = (w / 2) + padding;
+                 const halfD = (d / 2) + padding;
+
+                 const points = [];
+                 points.push(new THREE.Vector3(zone.px - halfW, 0.05, zone.pz - halfD));
+                 points.push(new THREE.Vector3(zone.px + halfW, 0.05, zone.pz - halfD));
+                 points.push(new THREE.Vector3(zone.px + halfW, 0.05, zone.pz + halfD));
+                 points.push(new THREE.Vector3(zone.px - halfW, 0.05, zone.pz + halfD));
+                 points.push(new THREE.Vector3(zone.px - halfW, 0.05, zone.pz - halfD)); // Fecha o loop
+
+                 const lineGeometry = new THREE.BufferGeometry().setFromPoints(points);
+                 const lineMaterial = new THREE.LineDashedMaterial({ 
+                     color: new THREE.Color(zone.colorHex), 
+                     linewidth: 2, 
+                     scale: 1, 
+                     dashSize: 1, 
+                     gapSize: 0.5 
+                 });
+                 
+                 const borderLine = new THREE.Line(lineGeometry, lineMaterial);
+                 borderLine.computeLineDistances(); // Essencial para o material tracejado funcionar
+                 warehouseGroup.add(borderLine);
+            });
+        }
+
+        function buildTreeUI() {
+            const container = document.getElementById('tree-container');
+            function createNodeHTML(node, level = 0, parentId = "") {
+                const isLeaf = node.analitico === "S";
+                const nodeId = node.codlocal.replace(/\./g, '-');
+                const pad = level * 16;
+                const nodeDiv = document.createElement('div'); nodeDiv.className = 'tree-node-container';
+                if(level > 0) { nodeDiv.style.marginLeft = `${pad}px`; nodeDiv.innerHTML += `<div class="tree-line"></div>`; if(!isLeaf) nodeDiv.innerHTML += `<div class="tree-line-vert"></div>`; }
+
+                let extras = '';
+                if(node.isZone) extras = `<div class="w-3 h-3 rounded-sm mr-2 shrink-0 border border-slate-600" style="background-color: ${node.color}"></div>`;
+                if(isLeaf) {
+                    const c = node.status === 'CHEIO' ? 'bg-rose-500' : (node.status === 'PARCIAL' ? 'bg-amber-500' : 'bg-emerald-500');
+                    extras = `<div class="w-1.5 h-1.5 rounded-full ${c} mr-2 shrink-0"></div>`;
+                }
+
+                const btn = document.createElement('button');
+                btn.className = `tree-btn w-full text-left flex items-center py-1.5 px-2 rounded border-l-2 border-transparent ${level===0?'text-white font-bold bg-slate-800 mb-2':(node.isZone?'text-indigo-300 font-bold mt-2':(isLeaf?'text-slate-400':'text-slate-200 text-xs'))}`;
+                btn.id = `tree-btn-${nodeId}`;
+                btn.innerHTML = `${extras}<span class="truncate">${node.descrlocal} <span class="text-[9px] opacity-50 ml-1">(${node.codlocal})</span></span>`;
+                
+                btn.onclick = (e) => {
+                    e.stopPropagation();
+                    if (isLeaf) { selectNode(node); } 
+                    else if (node.isRua || node.isModule) { selectNode(node); }
+                    else if (node.isZone) {
+                        // Move camera para focar a zona inteira
+                        new TWEEN.Tween(controls.target).to({ x: node.children[0].children[0].children[0].posData.x, y: 0, z: node.children[0].children[0].children[0].posData.z }, 800).start();
+                    }
+                };
+                nodeDiv.appendChild(btn);
+
+                if (node.children && node.children.length > 0) {
+                    const childDiv = document.createElement('div'); childDiv.className = 'mt-1 border-l border-slate-700/50 relative';
+                    node.children.forEach(child => childDiv.appendChild(createNodeHTML(child, level === 0 ? 1 : 0, nodeId)));
+                    nodeDiv.appendChild(childDiv);
+                }
+                return nodeDiv;
+            }
+            hierarchicalTree.forEach(root => container.appendChild(createNodeHTML(root)));
+        }
+
+        function clearSelectionHighlight() {
+            selectedMeshes.forEach(mesh => {
+                mesh.material.emissive.setHex(0x000000);
+                mesh.material.emissiveIntensity = 0;
+            });
+            selectedMeshes = [];
+            selectedMesh = null;
+        }
+
+        function selectNode(node) {
+            if (!node || (!node.mesh && !node.posData)) return;
+            clearSelectionHighlight();
+            currentSelectedNode = node;
+
+            const selectedPrefix = node.isRua || node.isModule ? `${node.codlocal}.` : node.codlocal;
+            selectedMeshes = locationsData
+                .filter(location => location.codlocal.startsWith(selectedPrefix))
+                .map(location => location.mesh);
+            selectedMeshes.forEach(mesh => {
+                mesh.material.emissive.setHex(CONFIG.colors.highlight);
+                mesh.material.emissiveIntensity = 0.5;
+            });
+            selectedMesh = node.mesh || selectedMeshes[0] || null;
+
+            document.querySelectorAll('.tree-btn').forEach(btn => btn.classList.remove('active'));
+            const treeBtn = document.getElementById(`tree-btn-${node.codlocal.replace(/\./g, '-')}`);
+            if (treeBtn) { treeBtn.classList.add('active'); treeBtn.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); }
+
+            // Camera animation
+            const targetPos = node.mesh ? node.mesh.position.clone() : new THREE.Vector3(node.posData.x, node.posData.y, node.posData.z);
+            new TWEEN.Tween(controls.target).to({ x: targetPos.x, y: targetPos.y, z: targetPos.z }, 800).easing(TWEEN.Easing.Cubic.Out).start();
+            new TWEEN.Tween(camera.position).to({ x: targetPos.x + 10, y: targetPos.y + 10, z: targetPos.z + 15 }, 1000).easing(TWEEN.Easing.Cubic.Out).start();
+
+            updateDetails(node);
+        }
+
+        function getAvailableDestinations(source) {
+            return locationsData.filter(location => location !== source && location.ocupacao === 0);
+        }
+
+        function populateOperationModal(title, confirmText, source, feedbackText) {
+            const destinations = getAvailableDestinations(source);
+            const destinationSelect = document.getElementById('operation-destination');
+            destinationSelect.innerHTML = destinations.length
+                ? destinations.map(location => `<option value="${location.codlocal}">${location.codlocal} • ${location.descrlocal}</option>`).join('')
+                : '<option value="">Nenhum local livre disponível</option>';
+            document.getElementById('operation-title').innerText = title;
+            document.getElementById('operation-product').innerText = `${source.produto.name} • Origem: ${source.codlocal}`;
+            document.getElementById('operation-quantity').value = Math.max(1, Math.min(source.qtd, source.qtd));
+            document.getElementById('operation-quantity').max = source.qtd;
+            document.getElementById('operation-feedback').className = 'hidden text-xs mb-3';
+            document.getElementById('operation-feedback').innerText = feedbackText;
+            const confirmButton = document.getElementById('operation-confirm');
+            confirmButton.innerText = confirmText;
+            confirmButton.onclick = title === 'Transferir produto' ? confirmTransfer : confirmStorageTask;
+            const modal = document.getElementById('operation-modal');
+            modal.classList.remove('hidden');
+            modal.classList.add('flex');
+        }
+
+        function openTransferModal() {
+            if (!currentSelectedNode || !currentSelectedNode.produto || currentSelectedNode.qtd <= 0) return;
+            populateOperationModal('Transferir produto', 'Confirmar transferência', currentSelectedNode, '');
+        }
+
+        function openStorageModal() {
+            if (!currentSelectedNode || !currentSelectedNode.produto || currentSelectedNode.qtd <= 0) return;
+            populateOperationModal('Criar tarefa de armazenagem', 'Criar tarefa', currentSelectedNode, '');
+        }
+
+        function closeOperationModal() {
+            const modal = document.getElementById('operation-modal');
+            modal.classList.add('hidden');
+            modal.classList.remove('flex');
+        }
+
+        function showOperationFeedback(message, isError = false) {
+            const feedback = document.getElementById('operation-feedback');
+            feedback.innerText = message;
+            feedback.className = `text-xs mb-3 ${isError ? 'text-rose-400' : 'text-emerald-400'}`;
+        }
+
+        function refreshLocationMesh(node) {
+            if (!node.mesh) return;
+            const { bayH, type, y } = node.posData;
+            const itemH = type === 'floor' ? 0.8 : bayH * 0.7;
+            const itemY = (type === 'floor' ? 0 : y + 0.1) + 0.05;
+            node.mesh.material.color.setHex(node.ocupacao === 100 ? CONFIG.colors.full : (node.ocupacao > 0 ? CONFIG.colors.partial : CONFIG.colors.free));
+            if (node.ocupacao === 0) {
+                node.mesh.scale.set(0.9, 0.05, 0.9);
+                node.mesh.position.set(node.posData.x, itemY, node.posData.z);
+            } else {
+                const scaleY = node.ocupacao < 100 ? Math.max(0.2, node.ocupacao / 100) : 1;
+                node.mesh.scale.set(0.9, scaleY, 0.9);
+                node.mesh.position.set(node.posData.x, itemY + (node.ocupacao < 100 ? itemH * scaleY / 2 : itemH / 2), node.posData.z);
+            }
+        }
+
+        function updateLocationStatus(node) {
+            OmniWarehouse.Domain.normalizeLocation(node);
+            refreshLocationMesh(node);
+        }
+
+        function confirmTransfer() {
+            const source = currentSelectedNode;
+            const quantity = Number(document.getElementById('operation-quantity').value);
+            const destination = locationsData.find(location => location.codlocal === document.getElementById('operation-destination').value);
+            try {
+                OmniWarehouse.Application.transferProduct(source, destination, quantity);
+            } catch (error) {
+                showOperationFeedback(error.message, true);
+                return;
+            }
+            updateLocationStatus(source);
+            updateLocationStatus(destination);
+            closeOperationModal();
+            updateDetails(source);
+        }
+
+        function confirmStorageTask() {
+            const source = currentSelectedNode;
+            const quantity = Number(document.getElementById('operation-quantity').value);
+            const destination = locationsData.find(location => location.codlocal === document.getElementById('operation-destination').value);
+            let task;
+            try {
+                task = OmniWarehouse.Application.createStorageTask(storageTasks, source, destination, quantity);
+            } catch (error) {
+                showOperationFeedback(error.message, true);
+                return;
+            }
+            closeOperationModal();
+            alert(`Tarefa de armazenagem #${task.id} criada para ${destination.codlocal}.`);
+        }
+
+        function updateDetails(data) {
+            const panel = document.getElementById('details-panel');
+            panel.classList.remove('translate-x-full'); panel.classList.add('translate-x-0');
+            
+            document.getElementById('det-level').innerText = data.descrlocal;
+            document.getElementById('det-codlocal').innerText = data.codlocal;
+            
+            // Busca o pai "Zona" subindo na arvore pelo codigo
+            const zoneCode = data.codlocal.substring(0, 7); 
+            const zoneConfig = CONFIG.zones.find(z => z.cod === zoneCode);
+            document.getElementById('det-zone-badge').innerText = zoneConfig ? zoneConfig.desc : 'ZONA';
+            document.getElementById('det-zone-badge').style.borderColor = zoneConfig ? zoneConfig.colorHex : '#475569';
+            document.getElementById('det-zone-badge').style.color = zoneConfig ? zoneConfig.colorHex : '#94a3b8';
+            document.getElementById('open-transfer-btn').style.display = 'none';
+            document.getElementById('open-storage-btn').style.display = 'none';
+
+            if (data.isRua || data.isModule) {
+                const parts = data.codlocal.split('.');
+                document.getElementById('det-descrlocal').innerText = data.isRua
+                    ? `Rua selecionada • ${zoneConfig ? zoneConfig.desc : 'Zona'}`
+                    : `Módulo selecionado • Rua ${parts[1]}`;
+                const badge = document.getElementById('det-status-badge');
+                badge.innerText = data.isRua ? 'RUA' : 'MÓDULO';
+                badge.className = 'text-xs font-bold px-2 py-1 rounded border bg-indigo-500/20 text-indigo-300 border-indigo-500/30';
+                document.getElementById('det-progress-bar').style.width = '0%';
+                document.getElementById('product-info-block').classList.add('hidden');
+                document.getElementById('empty-info-block').classList.add('hidden');
+                return;
+            }
+
+            const parts = data.codlocal.split('.');
+            document.getElementById('det-descrlocal').innerText = `Rua ${parts[1]} • Mód ${parts[2]} • Nível ${parts[3]}`;
+
+            const badge = document.getElementById('det-status-badge');
+            badge.innerText = data.status;
+            badge.className = `text-xs font-bold px-2 py-1 rounded border ${data.status === 'LIVRE' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' : (data.status === 'PARCIAL' ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-rose-500/20 text-rose-400 border-rose-500/30')}`;
+
+            const bar = document.getElementById('det-progress-bar');
+            bar.style.width = `${data.ocupacao}%`;
+            bar.className = `h-full w-full transition-all duration-500 ${data.ocupacao === 0 ? 'bg-emerald-500' : (data.ocupacao < 100 ? 'bg-amber-400' : 'bg-rose-500')}`;
+
+            const transferAlert = document.getElementById('det-transfer-alert');
+
+            if (data.produto && data.ocupacao > 0) {
+                document.getElementById('product-info-block').classList.remove('hidden'); document.getElementById('empty-info-block').classList.add('hidden');
+                document.getElementById('det-prod-name').innerText = data.produto.name; document.getElementById('det-prod-qtd').innerHTML = `${data.qtd} <span class="text-xs font-normal text-slate-400">UN</span>`;
+                document.getElementById('open-transfer-btn').style.display = 'block';
+                document.getElementById('open-storage-btn').style.display = 'block';
+                
+                if (data.needsReplenish) {
+                    transferAlert.classList.remove('hidden');
+                } else {
+                    transferAlert.classList.add('hidden');
+                }
+            } else {
+                document.getElementById('product-info-block').classList.add('hidden'); document.getElementById('empty-info-block').classList.remove('hidden');
+            }
+        }
+
+        function closeDetails() { document.getElementById('details-panel').classList.add('translate-x-full'); currentSelectedNode = null; clearSelectionHighlight(); document.querySelectorAll('.tree-btn').forEach(btn => btn.classList.remove('active')); }
+        function resetCamera() { new TWEEN.Tween(controls.target).to({ x: 0, y: 0, z: 0 }, 1000).start(); new TWEEN.Tween(camera.position).to({ x: 0, y: 70, z: 90 }, 1000).start(); }
+        function toggleWireframe() { isWireframe = !isWireframe; warehouseGroup.children.forEach(mesh => { if (mesh.material && mesh.material.type === "MeshStandardMaterial") { mesh.material.wireframe = isWireframe; if(mesh.userData.codlocal) mesh.material.opacity = isWireframe ? 0.3 : 0.95; } }); }
+        
+        function filterTree(term) {
+            term = term.toLowerCase();
+            document.querySelectorAll('.tree-btn').forEach(btn => {
+                const container = btn.parentElement;
+                if (btn.innerText.toLowerCase().includes(term)) {
+                    container.style.display = 'block';
+                    let p = container.parentElement; while(p && p.id !== 'tree-container') { if(p.classList.contains('tree-node-container')) p.style.display = 'block'; p = p.parentElement; }
+                } else { container.style.display = 'none'; }
+            });
+            if (term === '') document.querySelectorAll('.tree-node-container').forEach(el => el.style.display = 'block');
+        }
+
+        function onPointerMove(e) {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1; mouse.y = -(e.clientY / window.innerHeight) * 2 + 1; raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(locationsData.map(n => n.mesh));
+            if (intersects.length > 0) {
+                document.body.style.cursor = 'pointer'; const obj = intersects[0].object;
+                if (hoveredMesh !== obj && !selectedMeshes.includes(obj)) { if (hoveredMesh && !selectedMeshes.includes(hoveredMesh)) { hoveredMesh.material.emissive.setHex(0x000000); } hoveredMesh = obj; hoveredMesh.material.emissive.setHex(0x333333); }
+            } else { document.body.style.cursor = 'default'; if (hoveredMesh && !selectedMeshes.includes(hoveredMesh)) { hoveredMesh.material.emissive.setHex(0x000000); } hoveredMesh = null; }
+        }
+        function onClick(e) {
+            if(e.button !== 0) return; raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(locationsData.map(n => n.mesh));
+            if (intersects.length > 0) { selectNode(intersects[0].object.userData); } else { closeDetails(); }
+        }
+        function animate(time) { requestAnimationFrame(animate); TWEEN.update(time); controls.update(); renderer.render(scene, camera); }
+    </script>
+</body>
+</html>
