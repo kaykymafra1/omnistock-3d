@@ -3,7 +3,7 @@
 
   function validateMovement(source, destination, quantity) {
     const amount = Number(quantity);
-    if (!source || !destination || !source.produto || amount <= 0 || amount > source.qtd) {
+    if (!Number.isSafeInteger(amount) || amount <= 0 || !source || !destination || !source.produto || amount > source.qtd) {
       throw new Error("Informe uma quantidade válida e escolha um destino livre.");
     }
     if (destination.ocupacao > 0) throw new Error("O local de destino não está livre.");

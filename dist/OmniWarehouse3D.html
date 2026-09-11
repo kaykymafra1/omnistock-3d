@@ -192,7 +192,7 @@
         OmniWarehouse.Application = (() => {
             const validateMovement = (source, destination, quantity) => {
                 const amount = Number(quantity);
-                if (!source || !destination || !source.produto || amount <= 0 || amount > source.qtd || destination.ocupacao > 0) {
+                if (!Number.isSafeInteger(amount) || amount <= 0 || !source || !destination || !source.produto || amount > source.qtd || destination.ocupacao > 0) {
                     throw new Error('Informe uma quantidade válida e escolha um destino livre.');
                 }
                 return amount;
@@ -204,6 +204,7 @@
                 destination.ocupacao = Math.min(100, Math.max(1, Math.round(amount / 1.5)));
                 source.qtd -= amount;
                 source.ocupacao = source.qtd === 0 ? 0 : Math.min(100, Math.max(1, Math.round(source.qtd / 1.5)));
+                return { source, destination };
             };
             const createStorageTask = (tasks, source, destination, quantity) => {
                 const amount = validateMovement(source, destination, quantity);
@@ -252,19 +253,39 @@
         };
 
         let scene, camera, renderer, controls, raycaster, mouse;
-        let warehouseGroup = new THREE.Group();
+        let warehouseGroup;
         let locationsData = [];
         let hierarchicalTree = [];
         let currentSelectedNode = null;
         let storageTasks = [];
         let hoveredMesh = null, selectedMesh = null, selectedMeshes = [], isWireframe = false;
+        let demoRandomState = 123456789;
 
         const mockProds = OmniWarehouse.MockWarehouseRepository.listProducts();
 
-        init();
+        try {
+            if (!window.THREE || !window.THREE.OrbitControls || !window.TWEEN) {
+                throw new Error('As bibliotecas 3D não foram carregadas. Verifique a conexão com a internet e tente novamente.');
+            }
+            init();
+        } catch (error) {
+            console.error('Falha ao iniciar o OmniWarehouse 3D:', error);
+            showStartupError(error.message);
+        }
+
+        function showStartupError(message) {
+            const loader = document.getElementById('loader');
+            loader.innerHTML = `<div class="max-w-md px-6 text-center"><div class="text-rose-400 text-3xl mb-4"><i class="fas fa-triangle-exclamation"></i></div><h2 class="text-lg font-bold text-white">Não foi possível carregar o armazém</h2><p class="text-sm text-slate-300 mt-3">${message}</p><p class="text-xs text-slate-500 mt-4">Atualize a página ou verifique se os recursos externos estão acessíveis.</p></div>`;
+        }
+
+        function demoRandom() {
+            demoRandomState = (1664525 * demoRandomState + 1013904223) >>> 0;
+            return demoRandomState / 4294967296;
+        }
 
         function init() {
             const container = document.getElementById('canvas-container');
+            warehouseGroup = new THREE.Group();
             scene = new THREE.Scene();
             scene.fog = new THREE.FogExp2(0x020617, 0.008); 
 
@@ -371,13 +392,13 @@
                             const yPos = l * bayH;
                             
                             // Mock Status
-                            const rand = Math.random();
+                            const rand = demoRandom();
                             let status = "LIVRE", ocupacao = 0, prod = null;
-                            if (rand > 0.6) { status = "CHEIO"; ocupacao = 100; prod = mockProds[Math.floor(Math.random() * mockProds.length)]; } 
-                            else if (rand > 0.4) { status = "PARCIAL"; ocupacao = Math.floor(Math.random() * 80) + 10; prod = mockProds[Math.floor(Math.random() * mockProds.length)]; }
+                            if (rand > 0.6) { status = "CHEIO"; ocupacao = 100; prod = mockProds[Math.floor(demoRandom() * mockProds.length)]; }
+                            else if (rand > 0.4) { status = "PARCIAL"; ocupacao = Math.floor(demoRandom() * 80) + 10; prod = mockProds[Math.floor(demoRandom() * mockProds.length)]; }
 
                             // Mock: 10% chance of needing replenishment if it's a picking zone and not full
-                            const needsReplenish = zone.type === 'picking' && ocupacao < 50 && Math.random() > 0.8;
+                            const needsReplenish = zone.type === 'picking' && ocupacao < 50 && demoRandom() > 0.8;
 
                             const lvlNode = {
                                 codlocal: lvlCod, descrlocal: `Nível ${(l+1).toString().padStart(2, '0')}`, analitico: "S",
@@ -546,6 +567,7 @@
 
         function buildTreeUI() {
             const container = document.getElementById('tree-container');
+            const escapeHTML = value => String(value ?? '').replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]));
             function createNodeHTML(node, level = 0, parentId = "") {
                 const isLeaf = node.analitico === "S";
                 const nodeId = node.codlocal.replace(/\./g, '-');
@@ -563,7 +585,7 @@
                 const btn = document.createElement('button');
                 btn.className = `tree-btn w-full text-left flex items-center py-1.5 px-2 rounded border-l-2 border-transparent ${level===0?'text-white font-bold bg-slate-800 mb-2':(node.isZone?'text-indigo-300 font-bold mt-2':(isLeaf?'text-slate-400':'text-slate-200 text-xs'))}`;
                 btn.id = `tree-btn-${nodeId}`;
-                btn.innerHTML = `${extras}<span class="truncate">${node.descrlocal} <span class="text-[9px] opacity-50 ml-1">(${node.codlocal})</span></span>`;
+                btn.innerHTML = `${extras}<span class="truncate">${escapeHTML(node.descrlocal)} <span class="text-[9px] opacity-50 ml-1">(${escapeHTML(node.codlocal)})</span></span>`;
                 
                 btn.onclick = (e) => {
                     e.stopPropagation();
@@ -630,7 +652,7 @@
             const destinations = getAvailableDestinations(source);
             const destinationSelect = document.getElementById('operation-destination');
             destinationSelect.innerHTML = destinations.length
-                ? destinations.map(location => `<option value="${location.codlocal}">${location.codlocal} • ${location.descrlocal}</option>`).join('')
+                ? destinations.map(location => `<option value="${String(location.codlocal).replace(/"/g, '&quot;')}">${String(location.codlocal).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]))} • ${String(location.descrlocal).replace(/[&<>'"]/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[character]))}</option>`).join('')
                 : '<option value="">Nenhum local livre disponível</option>';
             document.getElementById('operation-title').innerText = title;
             document.getElementById('operation-product').innerText = `${source.produto.name} • Origem: ${source.codlocal}`;

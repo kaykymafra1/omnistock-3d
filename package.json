@@ -4,7 +4,8 @@
   "private": true,
   "description": "Mapeamento 3D de armazéns integrado ao ecossistema Sankhya ERP",
   "scripts": {
-    "validate": "node scripts/validate.mjs"
+    "validate": "node scripts/validate.mjs",
+    "test": "node --test"
   },
   "keywords": [
     "sankhya",
